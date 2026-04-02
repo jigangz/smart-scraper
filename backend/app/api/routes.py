@@ -1,0 +1,376 @@
+import asyncio
+import logging
+import os
+from datetime import datetime, timezone, timedelta
+from typing import Optional
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
+from sqlalchemy import func, select, delete
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.db.database import get_db
+from app.db.models import Job, Result, Log
+from app.api.schemas import (
+    JobCreate,
+    JobResponse,
+    JobListResponse,
+    ResultResponse,
+    StatsResponse,
+    LogResponse,
+)
+from app.scraper.engine import ScrapingEngine
+from app.export.exporter import export_csv, export_json
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+# Store active WebSocket connections per job
+_ws_connections: dict[int, list[WebSocket]] = {}
+
+
+async def _notify_ws(job_id: int, message: dict):
+    """Send a message to all WebSocket clients watching a job."""
+    if job_id in _ws_connections:
+        dead = []
+        for ws in _ws_connections[job_id]:
+            try:
+                await ws.send_json(message)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            _ws_connections[job_id].remove(ws)
+
+
+async def _run_job_task(job_id: int):
+    """Background task to run a scraping job."""
+    from app.db.database import async_session_factory
+
+    async with async_session_factory() as db:
+        result = await db.execute(select(Job).where(Job.id == job_id))
+        job = result.scalar_one_or_none()
+        if not job:
+            return
+
+        # Update status to running
+        job.status = "running"
+        job.updated_at = datetime.now(timezone.utc)
+        await db.commit()
+
+        await _notify_ws(job_id, {"status": "running", "message": "Job started"})
+
+        engine = ScrapingEngine(job_id=job_id, db_session=db)
+        summary = await engine.run(job)
+
+        # Update job with results
+        job.status = summary.get("status", "completed")
+        job.last_run = datetime.now(timezone.utc)
+        job.updated_at = datetime.now(timezone.utc)
+
+        # Count total results for this job
+        count_result = await db.execute(
+            select(func.count(Result.id)).where(Result.job_id == job_id)
+        )
+        job.results_count = count_result.scalar() or 0
+
+        await db.commit()
+
+        await _notify_ws(job_id, {
+            "status": job.status,
+            "message": f"Job finished: {summary.get('results_count', 0)} results",
+            "results_count": summary.get("results_count", 0),
+        })
+
+
+# --- Job CRUD ---
+
+@router.post("/api/jobs", response_model=JobResponse, status_code=201)
+async def create_job(job_data: JobCreate, db: AsyncSession = Depends(get_db)):
+    job = Job(
+        name=job_data.name,
+        url=job_data.url,
+        selectors=job_data.selectors,
+        pagination_config=job_data.pagination_config,
+        schedule=job_data.schedule,
+        anti_detection=job_data.anti_detection,
+        status="idle",
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+
+    # If schedule is set, add to scheduler
+    if job.schedule:
+        try:
+            from app.main import scheduler
+            scheduler.add_job(job.id, job.schedule, _run_scheduled_job)
+        except Exception as e:
+            logger.warning(f"Could not schedule job {job.id}: {e}")
+
+    return job
+
+
+@router.get("/api/jobs", response_model=JobListResponse)
+async def list_jobs(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+):
+    # Get total count
+    count_result = await db.execute(select(func.count(Job.id)))
+    total = count_result.scalar() or 0
+
+    # Get jobs
+    result = await db.execute(
+        select(Job).order_by(Job.created_at.desc()).offset(skip).limit(limit)
+    )
+    jobs = result.scalars().all()
+
+    return JobListResponse(jobs=jobs, total=total)
+
+
+@router.get("/api/jobs/{job_id}", response_model=JobResponse)
+async def get_job(job_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Job).where(Job.id == job_id))
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+@router.post("/api/jobs/{job_id}/run")
+async def run_job(
+    job_id: int,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Job).where(Job.id == job_id))
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if job.status == "running":
+        raise HTTPException(status_code=409, detail="Job is already running")
+
+    background_tasks.add_task(_run_job_task, job_id)
+
+    return {"message": "Job execution started", "job_id": job_id}
+
+
+@router.delete("/api/jobs/{job_id}")
+async def delete_job(job_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Job).where(Job.id == job_id))
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Remove from scheduler if scheduled
+    try:
+        from app.main import scheduler
+        scheduler.remove_job(job_id)
+    except Exception:
+        pass
+
+    await db.delete(job)
+    await db.commit()
+
+    return {"message": "Job deleted", "job_id": job_id}
+
+
+# --- Results ---
+
+@router.get("/api/results/{job_id}", response_model=list[ResultResponse])
+async def get_results(
+    job_id: int,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db),
+):
+    # Verify job exists
+    job_result = await db.execute(select(Job).where(Job.id == job_id))
+    if not job_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    result = await db.execute(
+        select(Result)
+        .where(Result.job_id == job_id)
+        .order_by(Result.scraped_at.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    return result.scalars().all()
+
+
+@router.get("/api/results/{job_id}/export")
+async def export_results(
+    job_id: int,
+    format: str = Query("json", regex="^(csv|json)$"),
+    db: AsyncSession = Depends(get_db),
+):
+    # Verify job exists
+    job_result = await db.execute(select(Job).where(Job.id == job_id))
+    job = job_result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Fetch all results
+    result = await db.execute(
+        select(Result)
+        .where(Result.job_id == job_id)
+        .order_by(Result.scraped_at.desc())
+    )
+    results = result.scalars().all()
+
+    if not results:
+        raise HTTPException(status_code=404, detail="No results to export")
+
+    # Extract data from result objects
+    data = [r.data for r in results if r.data]
+
+    filename = f"job_{job_id}_{job.name.replace(' ', '_')}"
+
+    if format == "csv":
+        filepath = export_csv(data, filename)
+        media_type = "text/csv"
+    else:
+        filepath = export_json(data, filename)
+        media_type = "application/json"
+
+    return FileResponse(
+        filepath,
+        media_type=media_type,
+        filename=os.path.basename(filepath),
+    )
+
+
+# --- Stats ---
+
+@router.get("/api/stats", response_model=StatsResponse)
+async def get_stats(db: AsyncSession = Depends(get_db)):
+    # Total jobs
+    total_jobs_result = await db.execute(select(func.count(Job.id)))
+    total_jobs = total_jobs_result.scalar() or 0
+
+    # Active jobs (running or scheduled)
+    active_jobs_result = await db.execute(
+        select(func.count(Job.id)).where(
+            Job.status.in_(["running", "scheduled"])
+        )
+    )
+    active_jobs = active_jobs_result.scalar() or 0
+
+    # Total results
+    total_results_result = await db.execute(select(func.count(Result.id)))
+    total_results = total_results_result.scalar() or 0
+
+    # Success rate
+    completed_result = await db.execute(
+        select(func.count(Job.id)).where(Job.status == "completed")
+    )
+    completed = completed_result.scalar() or 0
+
+    failed_result = await db.execute(
+        select(func.count(Job.id)).where(Job.status == "failed")
+    )
+    failed = failed_result.scalar() or 0
+
+    total_finished = completed + failed
+    success_rate = (completed / total_finished * 100) if total_finished > 0 else 100.0
+
+    # Recent activity (last 7 days)
+    recent_activity = []
+    for i in range(6, -1, -1):
+        day = datetime.now(timezone.utc) - timedelta(days=i)
+        day_start = day.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = day_start + timedelta(days=1)
+
+        count_result = await db.execute(
+            select(func.count(Result.id)).where(
+                Result.scraped_at >= day_start,
+                Result.scraped_at < day_end,
+            )
+        )
+        count = count_result.scalar() or 0
+        recent_activity.append({
+            "date": day_start.strftime("%Y-%m-%d"),
+            "count": count,
+        })
+
+    return StatsResponse(
+        total_jobs=total_jobs,
+        active_jobs=active_jobs,
+        total_results=total_results,
+        success_rate=round(success_rate, 1),
+        recent_activity=recent_activity,
+    )
+
+
+# --- Logs ---
+
+@router.get("/api/logs/{job_id}", response_model=list[LogResponse])
+async def get_logs(
+    job_id: int,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Log)
+        .where(Log.job_id == job_id)
+        .order_by(Log.timestamp.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    return result.scalars().all()
+
+
+# --- WebSocket ---
+
+@router.websocket("/ws/jobs/{job_id}")
+async def websocket_job_progress(websocket: WebSocket, job_id: int):
+    await websocket.accept()
+
+    if job_id not in _ws_connections:
+        _ws_connections[job_id] = []
+    _ws_connections[job_id].append(websocket)
+
+    try:
+        # Send initial status
+        from app.db.database import async_session_factory
+        async with async_session_factory() as db:
+            result = await db.execute(select(Job).where(Job.id == job_id))
+            job = result.scalar_one_or_none()
+            if job:
+                await websocket.send_json({
+                    "status": job.status,
+                    "message": f"Connected. Current status: {job.status}",
+                    "results_count": job.results_count,
+                })
+
+        # Keep connection alive
+        while True:
+            try:
+                data = await websocket.receive_text()
+                # Client can send ping/pong or commands
+                if data == "ping":
+                    await websocket.send_json({"type": "pong"})
+            except WebSocketDisconnect:
+                break
+
+    finally:
+        if job_id in _ws_connections:
+            if websocket in _ws_connections[job_id]:
+                _ws_connections[job_id].remove(websocket)
+            if not _ws_connections[job_id]:
+                del _ws_connections[job_id]
+
+
+# --- Helper for scheduled jobs ---
+
+async def _run_scheduled_job(job_id: int):
+    """Called by the scheduler to run a job."""
+    await _run_job_task(job_id)
