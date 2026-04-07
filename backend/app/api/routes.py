@@ -22,6 +22,7 @@ from app.api.schemas import (
 )
 from app.scraper.engine import ScrapingEngine
 from app.export.exporter import export_csv, export_json
+from app.worker import run_scraping_task, celery_app
 
 logger = logging.getLogger(__name__)
 
@@ -157,9 +158,32 @@ async def run_job(
     if job.status == "running":
         raise HTTPException(status_code=409, detail="Job is already running")
 
-    background_tasks.add_task(_run_job_task, job_id)
+    task_id = None
+    try:
+        task = run_scraping_task.delay(job_id)
+        task_id = task.id
+    except Exception as e:
+        logger.warning(f"Celery unavailable, falling back to BackgroundTasks: {e}")
+        background_tasks.add_task(_run_job_task, job_id)
 
-    return {"message": "Job execution started", "job_id": job_id}
+    return {"message": "Job execution started", "job_id": job_id, "task_id": task_id}
+
+
+@router.get("/api/jobs/{job_id}/task-status")
+async def get_task_status(
+    job_id: int,
+    task_id: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Job).where(Job.id == job_id))
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    async_result = celery_app.AsyncResult(task_id)
+    state = async_result.state
+    info = async_result.info if isinstance(async_result.info, dict) else {}
+
+    return {"job_id": job_id, "task_id": task_id, "state": state, "info": info}
 
 
 @router.delete("/api/jobs/{job_id}")

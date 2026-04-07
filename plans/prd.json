@@ -1,0 +1,182 @@
+{
+  "repo": "jigangz/smart-scraper",
+  "branchName": "feature/infra-upgrade",
+  "verifyCommand": "cd backend && pip install -r requirements.txt -q && pip install pytest pytest-asyncio fakeredis httpx -q && python -m pytest tests/ -v --tb=short 2>&1; echo \"EXIT_CODE=$?\"",
+  "acceptanceCriteria": [
+    "All pytest tests pass",
+    "docker-compose up starts all services without errors",
+    "Existing API endpoints remain backward compatible"
+  ],
+  "features": [
+    {
+      "id": "T-001",
+      "title": "Celery + Redis async task queue",
+      "priority": "high",
+      "passes": true,
+      "completed_at": "2026-04-07",
+      "acceptanceCriteria": [
+        "celery[redis] and redis added to requirements.txt",
+        "backend/app/worker.py exists with Celery app + run_scraping_task",
+        "Task has max_retries=3 with exponential backoff",
+        "POST /api/jobs/{id}/run submits Celery task and returns task_id",
+        "GET /api/jobs/{id}/task-status returns Celery task state + progress",
+        "docker-compose.yml has redis and worker services",
+        "tests/test_worker.py has at least 5 tests covering task submission, retry, status query",
+        "All existing API endpoints still work unchanged"
+      ],
+      "notes": "Replace BackgroundTasks with Celery. Use fakeredis in tests. Worker runs as separate docker service."
+    },
+    {
+      "id": "T-002",
+      "title": "Redis caching layer",
+      "priority": "high",
+      "passes": false,
+      "acceptanceCriteria": [
+        "backend/app/cache.py exists with get_cached_result and set_cached_result",
+        "Cache key = hash of (url + selectors)",
+        "TTL configurable, default 300s",
+        "ScrapingEngine checks cache before scraping",
+        "Cache hit skips scraping and returns cached data",
+        "tests/test_cache.py has at least 5 tests covering hit, miss, expiry, different selectors",
+        "All tests pass"
+      ],
+      "notes": "Use fakeredis in tests. Graceful degradation if Redis unavailable."
+    },
+    {
+      "id": "T-003",
+      "title": "Replace APScheduler with Celery Beat",
+      "priority": "high",
+      "passes": false,
+      "acceptanceCriteria": [
+        "APScheduler removed from requirements.txt",
+        "Celery Beat handles scheduled jobs",
+        "Schedule format still supports cron expressions and interval strings (30m, 2h, 1d)",
+        "Scheduled tasks persist across restarts (Redis backend)",
+        "docker-compose.yml has beat service or beat runs inside worker",
+        "tests/test_scheduler.py has at least 3 tests",
+        "All tests pass"
+      ],
+      "notes": "Celery Beat replaces the in-memory APScheduler. Keep the same schedule format in JobCreate schema."
+    },
+    {
+      "id": "T-004",
+      "title": "Prometheus metrics + health endpoint",
+      "priority": "medium",
+      "passes": false,
+      "acceptanceCriteria": [
+        "prometheus-client added to requirements.txt",
+        "backend/app/metrics.py exists with Counter, Histogram, Gauge metrics",
+        "Metrics: scraper_requests_total{domain,mode,status}, scraper_request_duration_seconds, scraper_cache_hits_total, scraper_cache_misses_total, scraper_queue_depth",
+        "GET /metrics returns Prometheus format",
+        "GET /health returns {status, checks: {redis, celery, db}}",
+        "Health degrades gracefully (degraded if Redis down, unhealthy if DB down)",
+        "tests/test_metrics.py has at least 4 tests",
+        "tests/test_health.py has at least 3 tests",
+        "All tests pass"
+      ],
+      "notes": "Use prometheus_client. Health endpoint checks Redis ping, Celery inspect, DB connection."
+    },
+    {
+      "id": "T-005",
+      "title": "Celery Flower + Prometheus + Grafana docker services",
+      "priority": "medium",
+      "passes": false,
+      "acceptanceCriteria": [
+        "docker-compose.yml has flower service (port 5555)",
+        "docker-compose.yml has prometheus service (port 9090)",
+        "docker-compose.yml has grafana service (port 3001)",
+        "monitoring/prometheus.yml exists with scrape config for backend:8000",
+        "monitoring/grafana/provisioning/ has datasource + dashboard config",
+        "monitoring/grafana/dashboards/scraper.json has pre-built dashboard with 5+ panels",
+        "docker-compose up starts all monitoring services"
+      ],
+      "notes": "Grafana dashboard panels: success rate, block rate, latency P50/P95, queue depth, cache hit rate. No tests needed for config files."
+    },
+    {
+      "id": "T-006",
+      "title": "Webhook + Redis Pub/Sub notifications",
+      "priority": "medium",
+      "passes": false,
+      "acceptanceCriteria": [
+        "JobCreate schema has optional webhook_url field",
+        "Job model has webhook_url column",
+        "Celery task POSTs results to webhook_url on completion (with 3 retries)",
+        "backend/app/notifications.py exists with notify() function",
+        "Redis Pub/Sub replaces in-memory _ws_connections for WebSocket",
+        "WebSocket endpoint subscribes to Redis channel scraper:progress:{job_id}",
+        "tests/test_webhook.py has at least 4 tests",
+        "tests/test_notifications.py has at least 3 tests",
+        "All tests pass"
+      ],
+      "notes": "Webhook retries with exponential backoff. Pub/Sub enables multi-instance WebSocket support."
+    },
+    {
+      "id": "T-007",
+      "title": "JS interaction support for dynamic pages",
+      "priority": "medium",
+      "passes": false,
+      "acceptanceCriteria": [
+        "JobCreate schema has optional interactions field (list of InteractionStep)",
+        "InteractionStep model: action (click/scroll/wait/type/select), selector, value, repeat, wait_ms",
+        "Job model has interactions column (JSON)",
+        "ScrapingEngine._execute_interactions() method exists",
+        "Interactions execute after page load, before data extraction",
+        "Supports: scroll to bottom, click selector, wait for selector, type into input",
+        "tests/test_interactions.py has at least 5 tests (mock patchright page)",
+        "All tests pass"
+      ],
+      "notes": "Only applies to dynamic and stealth modes (patchright). Fast mode ignores interactions."
+    },
+    {
+      "id": "T-008",
+      "title": "Cookie/session injection for authenticated scraping",
+      "priority": "low",
+      "passes": false,
+      "acceptanceCriteria": [
+        "JobCreate schema has optional cookies field (list of CookieItem)",
+        "CookieItem model: name, value, domain, path",
+        "Job model has cookies column (JSON, encrypted with Fernet)",
+        "cryptography added to requirements.txt",
+        "ScrapingEngine injects cookies before page fetch",
+        "ENCRYPTION_KEY env var used for Fernet key",
+        "tests/test_cookies.py has at least 4 tests (injection, encryption, decryption, missing key fallback)",
+        "All tests pass"
+      ],
+      "notes": "Cookies stored encrypted in DB. If ENCRYPTION_KEY not set, store plaintext with warning log."
+    },
+    {
+      "id": "T-009",
+      "title": "LLM auto-selector for CSS selectors",
+      "priority": "low",
+      "passes": false,
+      "acceptanceCriteria": [
+        "POST /api/jobs/auto-discover endpoint exists",
+        "Accepts URL, fetches page HTML, truncates to ~8K tokens",
+        "Sends to Groq API (Llama 3.3) to generate CSS selectors",
+        "Returns candidate selectors + sample extracted data",
+        "Successful selectors cached in Redis by domain",
+        "groq added to requirements.txt",
+        "GROQ_API_KEY env var",
+        "tests/test_auto_discover.py has at least 4 tests (mock LLM response, selector parsing, caching)",
+        "All tests pass"
+      ],
+      "notes": "Groq free tier. Mock the Groq API in tests. Fallback gracefully if API unavailable.",
+      "skip": false
+    },
+    {
+      "id": "T-010",
+      "title": "CI update with real pytest + README update",
+      "priority": "low",
+      "passes": false,
+      "acceptanceCriteria": [
+        ".github/workflows/ci.yml runs pytest instead of py_compile",
+        "CI installs test dependencies (pytest, pytest-asyncio, fakeredis, httpx)",
+        "CI runs: python -m pytest tests/ -v --tb=short",
+        "All tests pass in CI",
+        "README.md updated with new architecture diagram (text-based), feature list, docker-compose instructions",
+        "ROADMAP.md updated with completed phases marked"
+      ],
+      "notes": "Final cleanup task. Make sure CI matches what we run locally."
+    }
+  ]
+}

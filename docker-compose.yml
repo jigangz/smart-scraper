@@ -1,6 +1,18 @@
 version: "3.8"
 
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: smart-scraper-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   backend:
     build: ./backend
     container_name: smart-scraper-backend
@@ -11,12 +23,30 @@ services:
       - ./backend/exports:/app/exports
     environment:
       - DATABASE_URL=sqlite+aiosqlite:///./data/scraper.db
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/"]
       interval: 30s
       timeout: 10s
       retries: 3
+
+  worker:
+    build: ./backend
+    container_name: smart-scraper-worker
+    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=2
+    volumes:
+      - ./backend/data:/app/data
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:///./data/scraper.db
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
   frontend:
     build: ./frontend
