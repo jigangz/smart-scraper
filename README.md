@@ -162,6 +162,16 @@ smart-scraper/
 └── README.md
 ```
 
+## Roadmap
+
+See [ROADMAP.md](ROADMAP.md) for planned features:
+- **Phase 1** — JS Interactions (click, scroll, load more)
+- **Phase 2** — Cookie/Session Injection (authenticated scraping)
+- **Phase 3** — CAPTCHA Solving Service (2Captcha, CapSolver)
+- **Phase 4** — LLM Auto-Selector (auto-generate CSS selectors)
+- **Phase 5** — Site Template Library (pre-built configs for common sites)
+- **Phase 6** — Webhook & Notifications
+
 ## License
 
 MIT
