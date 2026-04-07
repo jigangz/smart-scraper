@@ -28,8 +28,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright browsers
-RUN playwright install chromium
+# Install browsers for both playwright and patchright
+RUN playwright install chromium && python -m patchright install chromium
 
 # Copy application code
 COPY . .

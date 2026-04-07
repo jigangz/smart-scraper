@@ -95,6 +95,7 @@ async def create_job(job_data: JobCreate, db: AsyncSession = Depends(get_db)):
         pagination_config=job_data.pagination_config,
         schedule=job_data.schedule,
         anti_detection=job_data.anti_detection,
+        mode=job_data.mode,
         status="idle",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),

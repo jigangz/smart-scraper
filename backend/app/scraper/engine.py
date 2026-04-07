@@ -20,7 +20,7 @@ def _scrapling_fetch(url: str, mode: str, proxy: Optional[str] = None):
     Synchronous Scrapling fetch using the specified mode.
     Returns a Scrapling page/response object.
     """
-    from scrapling.fetchers import Fetcher, StealthyFetcher, PlayWrightFetcher
+    from scrapling.fetchers import Fetcher, StealthyFetcher, DynamicFetcher
 
     common_kwargs = {}
     if proxy:
@@ -30,7 +30,7 @@ def _scrapling_fetch(url: str, mode: str, proxy: Optional[str] = None):
         return Fetcher.get(url, **common_kwargs)
 
     elif mode == "dynamic":
-        return PlayWrightFetcher.fetch(
+        return DynamicFetcher.fetch(
             url,
             headless=True,
             network_idle=True,

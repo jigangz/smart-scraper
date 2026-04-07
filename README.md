@@ -35,7 +35,7 @@ A production-ready web scraping platform with a beautiful dark-themed dashboard 
 - **SQLAlchemy** + **aiosqlite** — Async SQLite database
 - **Scrapling** — Advanced anti-bot scraping framework (3 fetcher modes)
 - **httpx** — Async HTTP client
-- **Playwright** — Headless browser for JS-heavy pages
+- **Patchright** + **Playwright** — Anti-detection headless browsers for JS-heavy pages
 - **APScheduler** — Job scheduling
 - **BeautifulSoup4** — HTML parsing
 
@@ -68,6 +68,8 @@ cd backend
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+playwright install chromium
+python -m patchright install chromium
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
