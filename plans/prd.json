@@ -83,7 +83,8 @@
       "id": "T-005",
       "title": "Celery Flower + Prometheus + Grafana docker services",
       "priority": "medium",
-      "passes": false,
+      "passes": true,
+      "completed_at": "2026-04-07",
       "acceptanceCriteria": [
         "docker-compose.yml has flower service (port 5555)",
         "docker-compose.yml has prometheus service (port 9090)",

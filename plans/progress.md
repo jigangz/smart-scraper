@@ -105,3 +105,20 @@ Project: smart-scraper infra upgrade (Celery + Redis + Monitoring + Features)
 - `import app.metrics` in the `/metrics` route handler ensures metrics are registered before `generate_latest()` is called
 
 ---
+
+### T-005: Celery Flower + Prometheus + Grafana docker services (2026-04-07)
+
+**Files created/modified:**
+- `docker-compose.yml` — Added `flower` (port 5555), `prometheus` (port 9090), `grafana` (port 3001) services
+- `monitoring/prometheus.yml` — Scrape config targeting `backend:8000` at `/metrics`
+- `monitoring/grafana/provisioning/datasources/prometheus.yml` — Auto-provisions Prometheus datasource
+- `monitoring/grafana/provisioning/dashboards/default.yml` — Auto-provisions dashboards from `/var/lib/grafana/dashboards`
+- `monitoring/grafana/dashboards/scraper.json` — Pre-built dashboard with 6 panels: success rate, block rate, cache hit rate, queue depth, latency P50/P95, requests per second by mode
+
+**Key learnings:**
+- No tests needed for config files — this task is purely infrastructure/config
+- Grafana uses `apiVersion: 1` in provisioning YAML files
+- Grafana image exposes port 3000 internally — map to 3001 externally to avoid conflict with frontend
+- All 44 existing tests still pass after this change
+
+---
