@@ -16,6 +16,7 @@ class Job(Base):
     anti_detection = Column(Boolean, default=True)
     mode = Column(String, default="fast")
     webhook_url = Column(String, nullable=True)
+    interactions = Column(JSON, nullable=True)
     status = Column(String, default="idle")
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

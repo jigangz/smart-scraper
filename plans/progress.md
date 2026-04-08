@@ -143,3 +143,21 @@ Project: smart-scraper infra upgrade (Celery + Redis + Monitoring + Features)
 - 58 tests pass after all changes
 
 ---
+
+### T-007: JS interaction support for dynamic pages (2026-04-07)
+
+**Files created/modified:**
+- `backend/app/api/schemas.py` — Added `InteractionStep` Pydantic model (action/selector/value/repeat/wait_ms); added `interactions: Optional[List[InteractionStep]] = None` to `JobCreate`; added `interactions: Optional[list] = None` to `JobResponse`
+- `backend/app/db/models.py` — Added `interactions = Column(JSON, nullable=True)` to `Job` model
+- `backend/app/scraper/engine.py` — Added module-level `_execute_interactions(page, interactions)` sync function; added `ScrapingEngine._execute_interactions()` instance-method delegate; added `interactions` parameter to `scrape_with_mode()`; wired interactions call after page fetch (dynamic/stealth only); passed `job.interactions` from `run()`
+- `backend/app/api/routes.py` — `create_job` serializes `InteractionStep` objects to dicts before storing in `Job.interactions`
+- `backend/tests/test_interactions.py` — 13 tests covering: click/scroll/type/select/wait actions, repeat count, wait_ms sleep, unknown action noop, API create/get, fast-mode ignores, dynamic-mode executes
+
+**Key learnings:**
+- `_execute_interactions` is module-level sync function (runs inside executor); the instance method on ScrapingEngine delegates to it
+- fast mode check (`mode != "fast"`) gates all interaction execution — fast mode always skips
+- `time.sleep` patching uses `app.scraper.engine.time.sleep` path (imported as `import time` at module level)
+- Interaction steps stored as JSON dicts in DB; serialized via `step.model_dump()` in create_job
+- 71 tests pass after all changes
+
+---

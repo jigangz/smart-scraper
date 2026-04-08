@@ -86,6 +86,10 @@ async def _run_job_task(job_id: int):
 
 @router.post("/api/jobs", response_model=JobResponse, status_code=201)
 async def create_job(job_data: JobCreate, db: AsyncSession = Depends(get_db)):
+    interactions_data = None
+    if job_data.interactions:
+        interactions_data = [step.model_dump() for step in job_data.interactions]
+
     job = Job(
         name=job_data.name,
         url=job_data.url,
@@ -95,6 +99,7 @@ async def create_job(job_data: JobCreate, db: AsyncSession = Depends(get_db)):
         anti_detection=job_data.anti_detection,
         mode=job_data.mode,
         webhook_url=job_data.webhook_url,
+        interactions=interactions_data,
         status="idle",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),

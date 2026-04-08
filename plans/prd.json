@@ -119,7 +119,8 @@
       "id": "T-007",
       "title": "JS interaction support for dynamic pages",
       "priority": "medium",
-      "passes": false,
+      "passes": true,
+      "completed_at": "2026-04-07",
       "acceptanceCriteria": [
         "JobCreate schema has optional interactions field (list of InteractionStep)",
         "InteractionStep model: action (click/scroll/wait/type/select), selector, value, repeat, wait_ms",

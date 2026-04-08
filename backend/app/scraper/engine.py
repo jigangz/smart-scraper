@@ -1,6 +1,7 @@
 import logging
+import time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -105,6 +106,55 @@ def _extract_with_scrapling(page, selectors: dict) -> list[dict]:
     return results
 
 
+def _execute_interactions(page, interactions: List[dict]) -> None:
+    """
+    Execute a sequence of interaction steps on a scraped page object.
+
+    Supports: click, scroll, wait (for selector), type, select.
+    Only called for dynamic and stealth modes; fast mode ignores interactions.
+
+    ``page`` must expose an ``execute_js(script: str)`` method.
+    """
+    for step in interactions:
+        action = step.get("action", "")
+        selector = step.get("selector") or ""
+        value = step.get("value") or ""
+        repeat = int(step.get("repeat") or 1)
+        wait_ms = int(step.get("wait_ms") or 0)
+
+        for _ in range(repeat):
+            if action == "click" and selector:
+                sel = selector.replace("'", "\\'")
+                page.execute_js(f"document.querySelector('{sel}')?.click();")
+            elif action == "scroll":
+                page.execute_js("window.scrollTo(0, document.body.scrollHeight);")
+            elif action == "wait" and selector:
+                sel = selector.replace("'", "\\'")
+                page.execute_js(
+                    f"(function() {{"
+                    f"  var el = document.querySelector('{sel}');"
+                    f"  return el !== null;"
+                    f"}})();"
+                )
+            elif action == "type" and selector:
+                sel = selector.replace("'", "\\'")
+                val = value.replace("'", "\\'")
+                page.execute_js(
+                    f"var el = document.querySelector('{sel}');"
+                    f"if (el) {{ el.value = '{val}'; }}"
+                )
+            elif action == "select" and selector:
+                sel = selector.replace("'", "\\'")
+                val = value.replace("'", "\\'")
+                page.execute_js(
+                    f"var el = document.querySelector('{sel}');"
+                    f"if (el) {{ el.value = '{val}'; }}"
+                )
+
+            if wait_ms > 0:
+                time.sleep(wait_ms / 1000.0)
+
+
 class ScrapingEngine:
     def __init__(self, job_id: int, db_session: AsyncSession, redis=None, cache_ttl: int = 300):
         self.job_id = job_id
@@ -112,12 +162,17 @@ class ScrapingEngine:
         self.redis = redis
         self.cache_ttl = cache_ttl
 
+    def _execute_interactions(self, page, interactions: List[dict]) -> None:
+        """Delegate to module-level _execute_interactions (testable via instance method)."""
+        _execute_interactions(page, interactions)
+
     async def scrape_with_mode(
         self,
         url: str,
         selectors: dict,
         mode: str,
         anti_detection: AntiDetection,
+        interactions: Optional[List[dict]] = None,
     ) -> list[dict]:
         """
         Scrape a URL using a Scrapling fetcher mode.
@@ -142,6 +197,18 @@ class ScrapingEngine:
                 f"Scrapling {mode} fetch failed for {url}: {e}",
             )
             return []
+
+        # Execute interactions after page load (dynamic/stealth only)
+        if mode != "fast" and interactions:
+            try:
+                await loop.run_in_executor(
+                    None, self._execute_interactions, page, interactions
+                )
+            except Exception as e:
+                await self._log(
+                    self.job_id, "warning",
+                    f"Interactions failed for {url} ({mode} mode): {e}",
+                )
 
         # Try Scrapling's own CSS engine first
         results = _extract_with_scrapling(page, selectors)
@@ -194,6 +261,12 @@ class ScrapingEngine:
         if mode not in MODES:
             mode = "fast"
 
+        # Extract interactions (only applied for dynamic/stealth modes)
+        job_interactions = getattr(job, "interactions", None)
+        interactions: Optional[List[dict]] = (
+            job_interactions if isinstance(job_interactions, list) else None
+        )
+
         # Configure anti-detection layer
         if job.anti_detection:
             anti_detection_config = {
@@ -227,7 +300,7 @@ class ScrapingEngine:
 
                 # Scrape with current mode
                 results = await self.scrape_with_mode(
-                    current_url, job.selectors, mode, anti
+                    current_url, job.selectors, mode, anti, interactions
                 )
 
                 # Auto-fallback: try next mode if no results
@@ -240,7 +313,7 @@ class ScrapingEngine:
                         f"falling back to {next_mode}...",
                     )
                     results = await self.scrape_with_mode(
-                        current_url, job.selectors, next_mode, anti
+                        current_url, job.selectors, next_mode, anti, interactions
                     )
                     current_mode = next_mode
 

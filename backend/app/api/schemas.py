@@ -1,6 +1,14 @@
 from datetime import datetime
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 from pydantic import BaseModel, ConfigDict
+
+
+class InteractionStep(BaseModel):
+    action: Literal["click", "scroll", "wait", "type", "select"]
+    selector: Optional[str] = None
+    value: Optional[str] = None
+    repeat: int = 1
+    wait_ms: int = 0
 
 
 class JobCreate(BaseModel):
@@ -12,6 +20,7 @@ class JobCreate(BaseModel):
     anti_detection: bool = True
     mode: Literal["fast", "dynamic", "stealth"] = "fast"
     webhook_url: Optional[str] = None
+    interactions: Optional[List[InteractionStep]] = None
 
 
 class JobResponse(BaseModel):
@@ -31,6 +40,7 @@ class JobResponse(BaseModel):
     last_run: Optional[datetime] = None
     results_count: int
     webhook_url: Optional[str] = None
+    interactions: Optional[list] = None
 
 
 class JobListResponse(BaseModel):
