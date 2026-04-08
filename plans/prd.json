@@ -100,7 +100,8 @@
       "id": "T-006",
       "title": "Webhook + Redis Pub/Sub notifications",
       "priority": "medium",
-      "passes": false,
+      "passes": true,
+      "completed_at": "2026-04-07",
       "acceptanceCriteria": [
         "JobCreate schema has optional webhook_url field",
         "Job model has webhook_url column",

@@ -122,3 +122,24 @@ Project: smart-scraper infra upgrade (Celery + Redis + Monitoring + Features)
 - All 44 existing tests still pass after this change
 
 ---
+
+### T-006: Webhook + Redis Pub/Sub notifications (2026-04-07)
+
+**Files created/modified:**
+- `backend/app/notifications.py` — New module: `notify(job_id, message, webhook_url, redis)` publishes to `scraper:progress:{job_id}` Redis channel; `_post_webhook()` POSTs with 3 retries + exponential backoff via httpx
+- `backend/app/db/models.py` — Added `webhook_url = Column(String, nullable=True)` to `Job`
+- `backend/app/api/schemas.py` — Added `webhook_url: Optional[str] = None` to `JobCreate` and `JobResponse`
+- `backend/app/api/routes.py` — Removed `_ws_connections` dict; `_notify_ws()` now publishes to Redis Pub/Sub via `notify()`; `create_job` passes `webhook_url`; WebSocket endpoint subscribes to `scraper:progress:{job_id}` with graceful Redis fallback
+- `backend/app/worker.py` — Calls `notify()` after job completion (publishes to Redis + fires webhook)
+- `backend/tests/test_notifications.py` — 8 tests: Redis publish, no-redis noop, Redis failure silence, webhook call, no webhook when None, POST success, retry exhaustion, retry success
+- `backend/tests/test_webhook.py` — 6 tests: create with/without webhook_url, GET includes field, list includes field, run job flow, payload structure
+
+**Key learnings:**
+- `_ws_connections` in-process dict removed entirely; Redis Pub/Sub is now the sole broadcast mechanism
+- WebSocket endpoint wraps Redis subscription in try/except — if Redis unavailable, WebSocket still works without real-time updates
+- `asyncio.create_task(_listen_redis())` runs concurrently with WebSocket receive loop; cancelled on disconnect
+- Worker imports `notify` inside `asyncio.run(_run())` — creates its own aioredis client and closes it after notify
+- `_post_webhook` uses `httpx.AsyncClient` context manager; `asyncio.sleep` patching required for fast retry tests
+- 58 tests pass after all changes
+
+---
