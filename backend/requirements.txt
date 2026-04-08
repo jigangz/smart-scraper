@@ -20,3 +20,4 @@ browserforge
 msgspec
 celery[redis]==5.3.6
 redis==5.0.1
+prometheus-client==0.20.0

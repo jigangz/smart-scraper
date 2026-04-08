@@ -5,8 +5,8 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
-from sqlalchemy import func, select, delete
+from fastapi.responses import FileResponse, Response
+from sqlalchemy import func, select, delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -399,3 +399,78 @@ async def websocket_job_progress(websocket: WebSocket, job_id: int):
 async def _run_scheduled_job(job_id: int):
     """Called by the scheduler to run a job."""
     await _run_job_task(job_id)
+
+
+# --- Observability helpers (patchable in tests) ---
+
+async def _check_redis() -> str:
+    """Ping Redis and return 'healthy' or 'unavailable'."""
+    try:
+        import redis.asyncio as aioredis
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        r = aioredis.from_url(redis_url)
+        await r.ping()
+        await r.aclose()
+        return "healthy"
+    except Exception:
+        return "unavailable"
+
+
+async def _check_celery() -> str:
+    """Inspect Celery workers and return 'healthy' or 'unavailable'."""
+    try:
+        import asyncio as _asyncio
+
+        def _do_inspect():
+            i = celery_app.control.inspect(timeout=1.0)
+            return i.ping()
+
+        loop = _asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, _do_inspect)
+        return "healthy" if result else "unavailable"
+    except Exception:
+        return "unavailable"
+
+
+async def _check_db() -> str:
+    """Run a trivial DB query and return 'healthy' or 'unhealthy'."""
+    try:
+        from app.db.database import async_session_factory
+        async with async_session_factory() as session:
+            await session.execute(text("SELECT 1"))
+        return "healthy"
+    except Exception:
+        return "unhealthy"
+
+
+# --- Observability endpoints ---
+
+@router.get("/metrics")
+async def prometheus_metrics():
+    """Return Prometheus-format metrics."""
+    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+    import app.metrics  # ensure metrics are registered  # noqa: F401
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+@router.get("/health")
+async def health_check():
+    """Return service health status with sub-component checks."""
+    redis_status = await _check_redis()
+    celery_status = await _check_celery()
+    db_status = await _check_db()
+
+    checks = {
+        "redis": redis_status,
+        "celery": celery_status,
+        "db": db_status,
+    }
+
+    if db_status != "healthy":
+        status = "unhealthy"
+    elif redis_status != "healthy" or celery_status != "healthy":
+        status = "degraded"
+    else:
+        status = "healthy"
+
+    return {"status": status, "checks": checks}

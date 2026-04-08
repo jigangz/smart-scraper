@@ -88,3 +88,20 @@ Project: smart-scraper infra upgrade (Celery + Redis + Monitoring + Features)
 - Cache hit returns early with `{"status": "completed", "cache_hit": True, ...}` without re-running scrape
 
 ---
+
+### T-004: Prometheus metrics + health endpoint (2026-04-07)
+
+**Files created/modified:**
+- `backend/requirements.txt` — Added `prometheus-client==0.20.0`
+- `backend/app/metrics.py` — Defines 5 metrics: `scraper_requests_total` (Counter, labels: domain/mode/status), `scraper_request_duration_seconds` (Histogram, label: mode), `scraper_cache_hits_total` (Counter), `scraper_cache_misses_total` (Counter), `scraper_queue_depth` (Gauge)
+- `backend/app/api/routes.py` — Added `text` + `Response` imports; added `_check_redis()`, `_check_celery()`, `_check_db()` helper coroutines (patchable in tests); added `GET /metrics` (prometheus_client generate_latest) and `GET /health` endpoints
+- `backend/tests/test_metrics.py` — 4 tests: 200 status, content-type, metric names present, repeatability
+- `backend/tests/test_health.py` — 4 tests: all-healthy, redis-down→degraded, celery-down→degraded, db-down→unhealthy
+
+**Key learnings:**
+- prometheus_client's `generate_latest()` always emits `# HELP` and `# TYPE` lines for every registered metric, even before any observations — so tests can assert metric names are present without incrementing them
+- Health sub-checks must be standalone async functions (not depending on `get_db`) so they can be patched with `AsyncMock` in tests
+- Celery's `control.inspect().ping()` is synchronous — wrap in `run_in_executor` to avoid blocking the async event loop
+- `import app.metrics` in the `/metrics` route handler ensures metrics are registered before `generate_latest()` is called
+
+---

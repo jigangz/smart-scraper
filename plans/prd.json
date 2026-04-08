@@ -64,7 +64,8 @@
       "id": "T-004",
       "title": "Prometheus metrics + health endpoint",
       "priority": "medium",
-      "passes": false,
+      "passes": true,
+      "completed_at": "2026-04-07",
       "acceptanceCriteria": [
         "prometheus-client added to requirements.txt",
         "backend/app/metrics.py exists with Counter, Histogram, Gauge metrics",
