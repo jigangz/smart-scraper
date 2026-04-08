@@ -11,6 +11,7 @@ class JobCreate(BaseModel):
     schedule: Optional[str] = None
     anti_detection: bool = True
     mode: Literal["fast", "dynamic", "stealth"] = "fast"
+    webhook_url: Optional[str] = None
 
 
 class JobResponse(BaseModel):
@@ -29,6 +30,7 @@ class JobResponse(BaseModel):
     updated_at: datetime
     last_run: Optional[datetime] = None
     results_count: int
+    webhook_url: Optional[str] = None
 
 
 class JobListResponse(BaseModel):

@@ -28,21 +28,18 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Store active WebSocket connections per job
-_ws_connections: dict[int, list[WebSocket]] = {}
-
 
 async def _notify_ws(job_id: int, message: dict):
-    """Send a message to all WebSocket clients watching a job."""
-    if job_id in _ws_connections:
-        dead = []
-        for ws in _ws_connections[job_id]:
-            try:
-                await ws.send_json(message)
-            except Exception:
-                dead.append(ws)
-        for ws in dead:
-            _ws_connections[job_id].remove(ws)
+    """Publish a message to the Redis Pub/Sub channel for a job."""
+    from app.notifications import notify
+    try:
+        import redis.asyncio as aioredis
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        r = aioredis.from_url(redis_url)
+        await notify(job_id, message, redis=r)
+        await r.aclose()
+    except Exception as exc:
+        logger.warning(f"Redis notification failed for job {job_id}: {exc}")
 
 
 async def _run_job_task(job_id: int):
@@ -97,6 +94,7 @@ async def create_job(job_data: JobCreate, db: AsyncSession = Depends(get_db)):
         schedule=job_data.schedule,
         anti_detection=job_data.anti_detection,
         mode=job_data.mode,
+        webhook_url=job_data.webhook_url,
         status="idle",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
@@ -359,39 +357,58 @@ async def get_logs(
 async def websocket_job_progress(websocket: WebSocket, job_id: int):
     await websocket.accept()
 
-    if job_id not in _ws_connections:
-        _ws_connections[job_id] = []
-    _ws_connections[job_id].append(websocket)
+    # Send initial status
+    from app.db.database import async_session_factory
+    async with async_session_factory() as db:
+        result = await db.execute(select(Job).where(Job.id == job_id))
+        job = result.scalar_one_or_none()
+        if job:
+            await websocket.send_json({
+                "status": job.status,
+                "message": f"Connected. Current status: {job.status}",
+                "results_count": job.results_count,
+            })
+
+    # Try to subscribe to Redis Pub/Sub for real-time updates
+    redis_client = None
+    redis_listen_task = None
+    try:
+        import redis.asyncio as aioredis
+        import json as _json
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        redis_client = aioredis.from_url(redis_url)
+        pubsub = redis_client.pubsub()
+        await pubsub.subscribe(f"scraper:progress:{job_id}")
+
+        async def _listen_redis():
+            async for msg in pubsub.listen():
+                if msg["type"] == "message":
+                    try:
+                        data = _json.loads(msg["data"])
+                        await websocket.send_json(data)
+                    except Exception:
+                        pass
+
+        redis_listen_task = asyncio.create_task(_listen_redis())
+    except Exception as exc:
+        logger.warning(f"Redis Pub/Sub unavailable for job {job_id}: {exc}")
 
     try:
-        # Send initial status
-        from app.db.database import async_session_factory
-        async with async_session_factory() as db:
-            result = await db.execute(select(Job).where(Job.id == job_id))
-            job = result.scalar_one_or_none()
-            if job:
-                await websocket.send_json({
-                    "status": job.status,
-                    "message": f"Connected. Current status: {job.status}",
-                    "results_count": job.results_count,
-                })
-
-        # Keep connection alive
         while True:
             try:
                 data = await websocket.receive_text()
-                # Client can send ping/pong or commands
                 if data == "ping":
                     await websocket.send_json({"type": "pong"})
             except WebSocketDisconnect:
                 break
-
     finally:
-        if job_id in _ws_connections:
-            if websocket in _ws_connections[job_id]:
-                _ws_connections[job_id].remove(websocket)
-            if not _ws_connections[job_id]:
-                del _ws_connections[job_id]
+        if redis_listen_task:
+            redis_listen_task.cancel()
+        if redis_client:
+            try:
+                await redis_client.aclose()
+            except Exception:
+                pass
 
 
 # --- Helper for scheduled jobs ---

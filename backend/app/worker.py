@@ -44,6 +44,8 @@ def run_scraping_task(self, job_id: int):
         from app.db.database import async_session_factory
         from app.db.models import Job, Result
         from app.scraper.engine import ScrapingEngine
+        from app.notifications import notify
+        import redis.asyncio as aioredis
 
         async with async_session_factory() as db:
             result = await db.execute(select(Job).where(Job.id == job_id))
@@ -73,6 +75,29 @@ def run_scraping_task(self, job_id: int):
                 )
                 job.results_count = count_result.scalar() or 0
                 await db.commit()
+
+                # Notify via Redis Pub/Sub and webhook
+                completion_msg = {
+                    "status": job.status,
+                    "results_count": job.results_count,
+                }
+                redis_client = None
+                try:
+                    redis_client = aioredis.from_url(REDIS_URL)
+                    await notify(
+                        job_id,
+                        completion_msg,
+                        webhook_url=job.webhook_url,
+                        redis=redis_client,
+                    )
+                except Exception as notify_exc:
+                    logger.warning(f"Notification failed for job {job_id}: {notify_exc}")
+                finally:
+                    if redis_client:
+                        try:
+                            await redis_client.aclose()
+                        except Exception:
+                            pass
 
                 return {"status": job.status, "results_count": job.results_count}
 
