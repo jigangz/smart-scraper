@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Job, Result, Log
 from app.scraper.anti_detect import AntiDetection
 from app.scraper.parsers import parse_html, extract_pagination_url
+from app.cache import get_cached_result, set_cached_result
 
 logger = logging.getLogger(__name__)
 
@@ -105,9 +106,11 @@ def _extract_with_scrapling(page, selectors: dict) -> list[dict]:
 
 
 class ScrapingEngine:
-    def __init__(self, job_id: int, db_session: AsyncSession):
+    def __init__(self, job_id: int, db_session: AsyncSession, redis=None, cache_ttl: int = 300):
         self.job_id = job_id
         self.db_session = db_session
+        self.redis = redis
+        self.cache_ttl = cache_ttl
 
     async def scrape_with_mode(
         self,
@@ -170,6 +173,22 @@ class ScrapingEngine:
         Handles pagination. Saves results to DB.
         """
         await self._log(self.job_id, "info", f"Starting job '{job.name}' for {job.url}")
+
+        # Check cache before scraping
+        cached = await get_cached_result(self.redis, job.url, job.selectors)
+        if cached is not None:
+            await self._log(
+                self.job_id, "info",
+                f"Cache hit for {job.url} — returning {len(cached)} cached results",
+            )
+            if cached:
+                await self._save_results(self.job_id, cached)
+            return {
+                "status": "completed",
+                "results_count": len(cached),
+                "pages_scraped": 0,
+                "cache_hit": True,
+            }
 
         mode = getattr(job, "mode", None) or "fast"
         if mode not in MODES:
@@ -250,6 +269,11 @@ class ScrapingEngine:
             # Save results
             if all_results:
                 await self._save_results(self.job_id, all_results)
+
+            # Cache the results for future requests
+            await set_cached_result(
+                self.redis, job.url, job.selectors, all_results, ttl=self.cache_ttl
+            )
 
             summary = {
                 "status": "completed",

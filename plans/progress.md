@@ -56,3 +56,17 @@ Project: smart-scraper infra upgrade (Celery + Redis + Monitoring + Features)
 - `test_job` fixture creates job via API endpoint (depends on `async_client`) — simpler than managing session fixtures separately
 
 ---
+
+### T-002: Redis caching layer (2026-04-07)
+
+**Files created/modified:**
+- `backend/app/cache.py` — `_make_cache_key` (sha256 of url+selectors JSON), `get_cached_result`, `set_cached_result` with TTL=300s default; graceful degradation when redis=None
+- `backend/app/scraper/engine.py` — `ScrapingEngine.__init__` gains optional `redis` and `cache_ttl` params; `run()` checks cache before scraping, stores results after scraping
+- `backend/tests/test_cache.py` — 12 tests: key determinism, miss, hit, empty list, TTL, different selectors isolation, None-redis noop
+
+**Key learnings:**
+- fakeredis.aioredis.FakeRedis supports `setex` and `ttl`, works identically to real Redis for cache tests
+- ScrapingEngine receives redis as a constructor parameter (not global) — easy to mock in tests and backward-compatible (defaults to None)
+- Cache hit returns early with `{"status": "completed", "cache_hit": True, ...}` without re-running scrape
+
+---

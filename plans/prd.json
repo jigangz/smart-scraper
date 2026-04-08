@@ -30,7 +30,8 @@
       "id": "T-002",
       "title": "Redis caching layer",
       "priority": "high",
-      "passes": false,
+      "passes": true,
+      "completed_at": "2026-04-07",
       "acceptanceCriteria": [
         "backend/app/cache.py exists with get_cached_result and set_cached_result",
         "Cache key = hash of (url + selectors)",
