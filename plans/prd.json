@@ -155,7 +155,8 @@
       "id": "T-009",
       "title": "LLM auto-selector for CSS selectors",
       "priority": "low",
-      "passes": false,
+      "passes": true,
+      "completed_at": "2026-04-07",
       "acceptanceCriteria": [
         "POST /api/jobs/auto-discover endpoint exists",
         "Accepts URL, fetches page HTML, truncates to ~8K tokens",
@@ -174,7 +175,8 @@
       "id": "T-010",
       "title": "CI update with real pytest + README update",
       "priority": "low",
-      "passes": false,
+      "passes": true,
+      "completed_at": "2026-04-07",
       "acceptanceCriteria": [
         ".github/workflows/ci.yml runs pytest instead of py_compile",
         "CI installs test dependencies (pytest, pytest-asyncio, fakeredis, httpx)",

@@ -86,3 +86,7 @@ class LogResponse(BaseModel):
 
 class ExportRequest(BaseModel):
     format: str  # "csv" or "json"
+
+
+class AutoDiscoverRequest(BaseModel):
+    url: str

@@ -19,11 +19,8 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements.txt
-      - run: python -m py_compile app/main.py
-      - run: python -m py_compile app/api/routes.py
-      - run: python -m py_compile app/scraper/engine.py
-      - run: python -m py_compile app/scraper/anti_detect.py
-      - run: python -m py_compile app/db/models.py
+      - run: pip install pytest pytest-asyncio fakeredis httpx
+      - run: python -m pytest tests/ -v --tb=short
 
   frontend:
     runs-on: ubuntu-latest

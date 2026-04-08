@@ -180,3 +180,32 @@ Project: smart-scraper infra upgrade (Celery + Redis + Monitoring + Features)
 - 78 tests pass after all changes
 
 ---
+
+### T-009: LLM auto-selector for CSS selectors (2026-04-07)
+
+**Files created/modified:**
+- `backend/app/auto_discover.py` — `auto_discover_selectors()`: cache check → fetch HTML → truncate to ~8K tokens → Groq API → BeautifulSoup sample extract → cache by domain
+- `backend/app/api/routes.py` — `POST /api/jobs/auto-discover` endpoint
+- `backend/app/api/schemas.py` — `AutoDiscoverRequest(url: str)` model
+- `backend/requirements.txt` — Added `groq>=0.9.0`
+- `backend/tests/test_auto_discover.py` — 11 tests: unit (domain, truncate, sample extract) + async (full flow, caching, cache hit, no-redis, endpoint)
+
+**Key learnings:**
+- `_call_groq` imported lazily inside function; tests patch without installing groq
+- Cache key is `auto_discover:domain:{netloc}` — keyed by domain for cross-URL reuse
+- 90 tests pass after all changes
+
+---
+
+### T-010: CI update + README + ROADMAP (2026-04-07)
+
+**Files created/modified:**
+- `.github/workflows/ci.yml` — Replaced `py_compile` with `pytest tests/ -v --tb=short` + test deps install
+- `README.md` — Full rewrite: text architecture diagram, all new features, env vars, docker-compose instructions
+- `ROADMAP.md` — All 10 completed tasks marked [DONE]; retained planned phases
+
+**Key learnings:**
+- No code changes needed — T-009 already existed; T-010 was docs/config only
+- 90 tests pass
+
+---

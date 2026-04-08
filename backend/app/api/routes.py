@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 from app.db.database import get_db
 from app.db.models import Job, Result, Log
 from app.api.schemas import (
+    AutoDiscoverRequest,
     JobCreate,
     JobResponse,
     JobListResponse,
@@ -421,6 +422,33 @@ async def websocket_job_progress(websocket: WebSocket, job_id: int):
                 await redis_client.aclose()
             except Exception:
                 pass
+
+
+# --- LLM auto-selector discovery ---
+
+@router.post("/api/jobs/auto-discover")
+async def auto_discover(request: AutoDiscoverRequest):
+    """Fetch page HTML, send to Groq LLM, return suggested CSS selectors + samples."""
+    from app.auto_discover import auto_discover_selectors
+
+    redis_client = None
+    try:
+        import redis.asyncio as aioredis
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        redis_client = aioredis.from_url(redis_url)
+    except Exception:
+        pass
+
+    try:
+        result = await auto_discover_selectors(request.url, redis=redis_client)
+    finally:
+        if redis_client is not None:
+            try:
+                await redis_client.aclose()
+            except Exception:
+                pass
+
+    return result
 
 
 # --- Helper for scheduled jobs ---
