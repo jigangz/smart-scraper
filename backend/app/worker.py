@@ -25,6 +25,8 @@ celery_app.conf.update(
     task_track_started=True,
     task_acks_late=True,
     worker_prefetch_multiplier=1,
+    beat_scheduler="redbeat.RedBeatScheduler",
+    redbeat_redis_url=REDIS_URL,
 )
 
 

@@ -57,6 +57,24 @@ Project: smart-scraper infra upgrade (Celery + Redis + Monitoring + Features)
 
 ---
 
+### T-003: Replace APScheduler with Celery Beat (2026-04-07)
+
+**Files created/modified:**
+- `backend/requirements.txt` — Removed `apscheduler==3.10.4`, added `celery-redbeat` (pip package name for `redbeat`)
+- `backend/app/scraper/scheduler.py` — Complete rewrite: `parse_schedule()` standalone function + `JobScheduler` using `RedBeatSchedulerEntry` for Redis-backed persistence. `start()`/`stop()` are now no-ops (Celery Beat runs as separate process)
+- `backend/app/worker.py` — Added `beat_scheduler='redbeat.RedBeatScheduler'` and `redbeat_redis_url=REDIS_URL` to `celery_app.conf`
+- `docker-compose.yml` — Added `beat` service running `celery beat --scheduler redbeat.RedBeatScheduler`
+- `backend/tests/test_scheduler.py` — 14 tests: 8 for `parse_schedule`, 6 for `JobScheduler` (mocking redbeat)
+
+**Key learnings:**
+- The pip package name is `celery-redbeat` (not `redbeat`) — `import redbeat` still works after install
+- `parse_schedule()` extracted as standalone function makes it easily unit-testable without any mocking
+- `patch.dict('sys.modules', {'redbeat': mock_module})` lets `add_job`/`remove_job` tests work without a real Redis connection
+- `JobScheduler.start()` and `stop()` remain as no-ops (API backward compatible with conftest.py patches)
+- Celery Beat persistence via redbeat stores entries in Redis under `redbeat:{entry_name}` keys
+
+---
+
 ### T-002: Redis caching layer (2026-04-07)
 
 **Files created/modified:**

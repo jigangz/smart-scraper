@@ -47,7 +47,8 @@
       "id": "T-003",
       "title": "Replace APScheduler with Celery Beat",
       "priority": "high",
-      "passes": false,
+      "passes": true,
+      "completed_at": "2026-04-07",
       "acceptanceCriteria": [
         "APScheduler removed from requirements.txt",
         "Celery Beat handles scheduled jobs",
