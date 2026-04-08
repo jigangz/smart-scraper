@@ -161,3 +161,22 @@ Project: smart-scraper infra upgrade (Celery + Redis + Monitoring + Features)
 - 71 tests pass after all changes
 
 ---
+
+### T-008: Cookie/session injection for authenticated scraping (2026-04-07)
+
+**Files created/modified:**
+- `backend/requirements.txt` — Added `cryptography>=42.0.0`
+- `backend/app/cookie_encryption.py` — New module: `encrypt_cookies` / `decrypt_cookies` using Fernet; `_get_fernet()` reads `ENCRYPTION_KEY` env var; if not set → plaintext with warning log
+- `backend/app/api/schemas.py` — Added `CookieItem` model (name/value/domain/path); added `cookies: Optional[List[CookieItem]]` to `JobCreate`; added `cookies: Optional[list]` to `JobResponse`
+- `backend/app/db/models.py` — Added `cookies = Column(JSON, nullable=True)` to `Job`
+- `backend/app/api/routes.py` — `create_job` encrypts cookies via `encrypt_cookies()` before storing; passes `cookies=cookies_data` to `Job()`
+- `backend/app/scraper/engine.py` — `_scrapling_fetch` gains `cookies` param; fast mode passes `{name: value}` dict; dynamic/stealth pass list; `scrape_with_mode` gains `cookies` param; `run()` calls `decrypt_cookies()` on `job.cookies` before passing to `scrape_with_mode`
+- `backend/tests/test_cookies.py` — 7 tests: encrypt/decrypt round-trip, no-key plaintext fallback, decrypt noop for unencrypted, `_scrapling_fetch` mock, engine run decrypts+injects, API create/get, multi-cookie round-trip
+
+**Key learnings:**
+- `functools.partial(_scrapling_fetch, url, mode, proxy, cookies)` required because `run_in_executor` takes a callable + no extra args; partial pre-fills all 4 positional args cleanly
+- Fernet key must be 32-byte URL-safe base64; `Fernet.generate_key()` produces valid keys for tests
+- `_encrypted: True` marker stored alongside encrypted value so `decrypt_cookies` knows which entries need decryption (cookies without it pass through unchanged)
+- 78 tests pass after all changes
+
+---

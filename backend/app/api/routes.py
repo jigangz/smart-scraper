@@ -90,6 +90,12 @@ async def create_job(job_data: JobCreate, db: AsyncSession = Depends(get_db)):
     if job_data.interactions:
         interactions_data = [step.model_dump() for step in job_data.interactions]
 
+    cookies_data = None
+    if job_data.cookies:
+        from app.cookie_encryption import encrypt_cookies
+        raw = [c.model_dump() for c in job_data.cookies]
+        cookies_data = encrypt_cookies(raw)
+
     job = Job(
         name=job_data.name,
         url=job_data.url,
@@ -100,6 +106,7 @@ async def create_job(job_data: JobCreate, db: AsyncSession = Depends(get_db)):
         mode=job_data.mode,
         webhook_url=job_data.webhook_url,
         interactions=interactions_data,
+        cookies=cookies_data,
         status="idle",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),

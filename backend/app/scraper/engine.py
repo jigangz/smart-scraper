@@ -17,10 +17,17 @@ MODES = ("fast", "dynamic", "stealth")
 FALLBACK_ORDER = {"fast": "dynamic", "dynamic": "stealth", "stealth": None}
 
 
-def _scrapling_fetch(url: str, mode: str, proxy: Optional[str] = None):
+def _scrapling_fetch(
+    url: str,
+    mode: str,
+    proxy: Optional[str] = None,
+    cookies: Optional[List[dict]] = None,
+):
     """
     Synchronous Scrapling fetch using the specified mode.
     Returns a Scrapling page/response object.
+    Cookies are injected as a name→value dict for fast mode and as a list of
+    dicts for browser-based modes (dynamic/stealth).
     """
     from scrapling.fetchers import Fetcher, StealthyFetcher, DynamicFetcher
 
@@ -29,9 +36,13 @@ def _scrapling_fetch(url: str, mode: str, proxy: Optional[str] = None):
         common_kwargs["proxy"] = proxy
 
     if mode == "fast":
+        if cookies:
+            common_kwargs["cookies"] = {c["name"]: c["value"] for c in cookies}
         return Fetcher.get(url, **common_kwargs)
 
     elif mode == "dynamic":
+        if cookies:
+            common_kwargs["cookies"] = cookies
         return DynamicFetcher.fetch(
             url,
             headless=True,
@@ -40,6 +51,8 @@ def _scrapling_fetch(url: str, mode: str, proxy: Optional[str] = None):
         )
 
     elif mode == "stealth":
+        if cookies:
+            common_kwargs["cookies"] = cookies
         return StealthyFetcher.fetch(
             url,
             headless=True,
@@ -173,6 +186,7 @@ class ScrapingEngine:
         mode: str,
         anti_detection: AntiDetection,
         interactions: Optional[List[dict]] = None,
+        cookies: Optional[List[dict]] = None,
     ) -> list[dict]:
         """
         Scrape a URL using a Scrapling fetcher mode.
@@ -187,9 +201,11 @@ class ScrapingEngine:
 
         try:
             import asyncio
+            import functools
             loop = asyncio.get_event_loop()
             page = await loop.run_in_executor(
-                None, _scrapling_fetch, url, mode, proxy
+                None,
+                functools.partial(_scrapling_fetch, url, mode, proxy, cookies),
             )
         except Exception as e:
             await self._log(
@@ -267,6 +283,14 @@ class ScrapingEngine:
             job_interactions if isinstance(job_interactions, list) else None
         )
 
+        # Decrypt and extract cookies for injection
+        raw_cookies = getattr(job, "cookies", None)
+        if raw_cookies and isinstance(raw_cookies, list):
+            from app.cookie_encryption import decrypt_cookies
+            job_cookies: Optional[List[dict]] = decrypt_cookies(raw_cookies)
+        else:
+            job_cookies = None
+
         # Configure anti-detection layer
         if job.anti_detection:
             anti_detection_config = {
@@ -300,7 +324,7 @@ class ScrapingEngine:
 
                 # Scrape with current mode
                 results = await self.scrape_with_mode(
-                    current_url, job.selectors, mode, anti, interactions
+                    current_url, job.selectors, mode, anti, interactions, job_cookies
                 )
 
                 # Auto-fallback: try next mode if no results
@@ -313,7 +337,7 @@ class ScrapingEngine:
                         f"falling back to {next_mode}...",
                     )
                     results = await self.scrape_with_mode(
-                        current_url, job.selectors, next_mode, anti, interactions
+                        current_url, job.selectors, next_mode, anti, interactions, job_cookies
                     )
                     current_mode = next_mode
 

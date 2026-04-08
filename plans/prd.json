@@ -137,7 +137,8 @@
       "id": "T-008",
       "title": "Cookie/session injection for authenticated scraping",
       "priority": "low",
-      "passes": false,
+      "passes": true,
+      "completed_at": "2026-04-07",
       "acceptanceCriteria": [
         "JobCreate schema has optional cookies field (list of CookieItem)",
         "CookieItem model: name, value, domain, path",

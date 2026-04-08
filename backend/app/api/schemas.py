@@ -11,6 +11,13 @@ class InteractionStep(BaseModel):
     wait_ms: int = 0
 
 
+class CookieItem(BaseModel):
+    name: str
+    value: str
+    domain: Optional[str] = None
+    path: Optional[str] = "/"
+
+
 class JobCreate(BaseModel):
     name: str
     url: str
@@ -21,6 +28,7 @@ class JobCreate(BaseModel):
     mode: Literal["fast", "dynamic", "stealth"] = "fast"
     webhook_url: Optional[str] = None
     interactions: Optional[List[InteractionStep]] = None
+    cookies: Optional[List[CookieItem]] = None
 
 
 class JobResponse(BaseModel):
@@ -41,6 +49,7 @@ class JobResponse(BaseModel):
     results_count: int
     webhook_url: Optional[str] = None
     interactions: Optional[list] = None
+    cookies: Optional[list] = None
 
 
 class JobListResponse(BaseModel):
