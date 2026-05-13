@@ -22,7 +22,7 @@ services:
       - ./backend/data:/app/data
       - ./backend/exports:/app/exports
     environment:
-      - DATABASE_URL=sqlite+aiosqlite:///./data/scraper.db
+      - DATABASE_URL=sqlite+aiosqlite:////app/data/scraper.db
       - REDIS_URL=redis://redis:6379/0
     depends_on:
       redis:
@@ -41,7 +41,7 @@ services:
     volumes:
       - ./backend/data:/app/data
     environment:
-      - DATABASE_URL=sqlite+aiosqlite:///./data/scraper.db
+      - DATABASE_URL=sqlite+aiosqlite:////app/data/scraper.db
       - REDIS_URL=redis://redis:6379/0
     depends_on:
       redis:
@@ -55,7 +55,7 @@ services:
     volumes:
       - ./backend/data:/app/data
     environment:
-      - DATABASE_URL=sqlite+aiosqlite:///./data/scraper.db
+      - DATABASE_URL=sqlite+aiosqlite:////app/data/scraper.db
       - REDIS_URL=redis://redis:6379/0
     depends_on:
       redis:
