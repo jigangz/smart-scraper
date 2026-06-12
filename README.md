@@ -242,4 +242,9 @@ No external services required — Redis is mocked with `fakeredis`.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
+
+The anti-detection scraping engine (fast/dynamic/stealth fetchers, Cloudflare
+handling) is powered by [Scrapling](https://github.com/D4Vinci/Scrapling)
+(BSD-3-Clause), used as a dependency. This project is the FastAPI/Celery
+platform layer around it — orchestration, scheduling, API, and dashboard.
